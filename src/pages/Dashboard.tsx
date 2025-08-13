@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchDevices, fetchTelemetry, fetchEvents, type Telemetry, type EventItem } from '@/lib/api'
 import { telemetrySocket } from '../lib/ws'
@@ -10,15 +10,14 @@ import {
     SelectItem,
     SelectValue,
 } from "@/components/ui/select"
-import { Table, TableHeader, TableHead, TableBody, TableRow, TableCell } from '../components/ui/table'
 import { KPI } from '../components/kpi'
 import { TelemetryChart } from '../components/telemetry-chart'
 import { CommandPanel } from '../components/command-panel'
 import { type WSMessage, type WSEvent, type WSStatus, type WSTelemetry } from "@/types/ws";
-import { StatusPill } from "@/components/status-pill";
 import { EventFeed } from "@/components/event-feed";
 import { DeviceEventsTable } from "@/components/device-events-table";
 import { TelemetryTable } from "@/components/device-telemetry-table";
+import { summarizeDoor } from '@/lib/utils'
 
 export default function Dashboard() {
     const qc = useQueryClient()
@@ -40,6 +39,18 @@ export default function Dashboard() {
     const [events, setEvents] = useState<WSEvent[]>([]);
     const telemetryBuffer = useRef<Record<string, WSTelemetry[]>>({}); // for charts
 
+    // Door summary (last 200 telemetry points for the selected device)
+    const doorSummary = useMemo(() => {
+        // IMPORTANT: don't mutate `series` (avoid series.reverse()).
+        const last = series.slice(-200);
+        return summarizeDoor(last);
+    }, [series]);
+
+    // A device is a “door” if any telemetry point has a boolean `open` key
+    const isDoorDevice = useMemo(
+        () => series.some((r) => typeof r.data?.open === 'boolean'),
+        [series]
+    );
     useEffect(() => {
         const ws = telemetrySocket((msg) => {
             if (msg.kind === "status") {
@@ -131,7 +142,25 @@ export default function Dashboard() {
                     )}
                 </CardContent>
             </Card>
-
+            {selected && isDoorDevice && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-base sm:text-lg">Door Activity (last 200 points)</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="grid grid-cols-2 gap-4 sm:max-w-md">
+                            <div className="rounded-xl bg-orange-300/15 border border-green-600/20 p-4">
+                                <div className="text-xs uppercase tracking-wide text-green-300/90">Open</div>
+                                <div className="text-2xl font-semibold">{doorSummary.open}</div>
+                            </div>
+                            <div className="rounded-xl bg-zinc-600/15 border border-zinc-600/20 p-4">
+                                <div className="text-xs uppercase tracking-wide text-amber-600/90">Closed</div>
+                                <div className="text-2xl font-semibold">{doorSummary.closed}</div>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
             {selected && (
                 <Card>
                     <CardHeader>
