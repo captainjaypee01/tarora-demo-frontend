@@ -5,6 +5,15 @@ export const api = axios.create({ baseURL: API_URL })
 
 export type Device = { id: string; name: string; type: string }
 export type Telemetry = { device_id: string; ts: string; data: Record<string, any> }
+export type EventItem = {
+    id: number
+    device_id: string
+    ts: string
+    level: string
+    event: string
+    details?: Record<string, any>
+    name?: string
+}
 
 export async function fetchDevices() {
     const { data } = await api.get<Device[]>('/api/devices')
@@ -29,5 +38,10 @@ export async function sendCommand(device_id: string, command: string, params: Re
 
 export async function updateDeviceName(device_id: string, name: string) {
     const { data } = await api.put(`/api/devices/${device_id}`, { name })
+    return data
+}
+
+export async function fetchEvents(device_id?: string, limit = 200, level?: string) {
+    const { data } = await api.get<EventItem[]>(`/api/events`, { params: { device_id, limit, level } })
     return data
 }

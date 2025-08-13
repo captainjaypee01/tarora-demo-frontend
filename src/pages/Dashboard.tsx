@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchDevices, fetchTelemetry } from '@/lib/api'
-import type { Telemetry } from "@/lib/api"
+import { fetchDevices, fetchTelemetry, fetchEvents, type Telemetry, type EventItem } from '@/lib/api'
 import { telemetrySocket } from '../lib/ws'
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card'
 import {
@@ -18,6 +17,8 @@ import { CommandPanel } from '../components/command-panel'
 import { type WSMessage, type WSEvent, type WSStatus, type WSTelemetry } from "@/types/ws";
 import { StatusPill } from "@/components/status-pill";
 import { EventFeed } from "@/components/event-feed";
+import { DeviceEventsTable } from "@/components/device-events-table";
+import { TelemetryTable } from "@/components/device-telemetry-table";
 
 export default function Dashboard() {
     const qc = useQueryClient()
@@ -28,6 +29,13 @@ export default function Dashboard() {
         queryFn: () => fetchTelemetry(selected!),
         enabled: !!selected,
     })
+
+    const { data: deviceEvents = [] } = useQuery({
+        queryKey: ['events', selected],
+        queryFn: () => fetchEvents(selected!, 200),
+        enabled: !!selected,
+    })
+
     const [statusByDevice, setStatusByDevice] = useState<Record<string, WSStatus["status"]>>({});
     const [events, setEvents] = useState<WSEvent[]>([]);
     const telemetryBuffer = useRef<Record<string, WSTelemetry[]>>({}); // for charts
@@ -41,6 +49,20 @@ export default function Dashboard() {
                     const next = arr.length > 200 ? arr.slice(arr.length - 200) : arr;
                     return [...next, msg];
                 });
+                // live-update device events cache
+                qc.setQueryData<EventItem[] | undefined>(['events', msg.device_id], (prev) => {
+                    const row: EventItem = {
+                        id: Date.now(), // UI key only; DB id comes from HTTP fetch
+                        device_id: msg.device_id,
+                        ts: msg.ts,
+                        level: msg.level ?? "info",
+                        event: msg.event,
+                        details: msg.details,
+                        name: msg.name,
+                    };
+                    const arr = prev ? [...prev, row] : [row];
+                    return arr.length > 200 ? arr.slice(arr.length - 200) : arr;
+                });
                 // optional: toast on alarms
                 // if (msg.level === "alarm") toast.error(`${msg.device_id}: ${msg.event}`);
             } else if (msg.kind === "telemetry") {
@@ -49,17 +71,21 @@ export default function Dashboard() {
                 buf.push(msg);
                 if (buf.length > 500) buf.shift();
                 telemetryBuffer.current[dev] = buf;
+                // live-update telemetry cache for that device
+                qc.setQueryData<Telemetry[] | undefined>(['telemetry', dev], (prev) => {
+                    const row: Telemetry = { device_id: dev, ts: msg.ts, data: (msg.data as Record<string, any>) ?? {} };
+                    const arr = prev ? [...prev, row] : [row];
+                    return arr.length > 500 ? arr.slice(arr.length - 500) : arr;
+                });
             }
         })
         return () => ws.close()
-    }, [selected, qc])
+    }, [qc])
 
     useEffect(() => { if (devices.length && !selected) setSelected(devices[0].id) }, [devices, selected])
 
-    const latest = series[series.length - 1]
+    const latest = series?.[series.length - 1]
     const metricKeys = latest ? Object.keys(latest.data) : []
-    console.log('series', series);
-    console.log('series reverse', series.reverse());
     return (
         <div className="max-w-8xl mx-auto p-6 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
@@ -69,6 +95,10 @@ export default function Dashboard() {
                 <KPI label="Metrics" value={metricKeys.length || '—'} />
             </div>
 
+            {/* Global live Events feed (all devices) */}
+            <div className="col-span-1">
+                <EventFeed events={events} />
+            </div>
             <Card>
                 <CardHeader className="flex items-center justify-between">
                     <CardTitle className="text-base sm:text-lg">Devices</CardTitle>
@@ -113,46 +143,12 @@ export default function Dashboard() {
                 </Card>
             )}
 
-            <div className="col-span-1">
-                <EventFeed events={events} />
+
+            {/* Two-column section (stacks to 1 col on mobile): Device Events  Telemetry */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <DeviceEventsTable rows={deviceEvents} />
+                <TelemetryTable rows={series} />
             </div>
-            <Card>
-                <CardHeader>
-                    <CardTitle className="text-base sm:text-lg">Recent Telemetry</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="overflow-x-auto">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Timestamp</TableHead>
-                                    <TableHead>Metric</TableHead>
-                                    <TableHead>Value</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {series.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={3} className="text-muted-foreground text-sm py-8 text-center">
-                                            No telemetry yet.
-                                        </TableCell>
-                                    </TableRow>
-                                ) : (
-                                    series?.reverse().flatMap((row, i) => (
-                                        Object.entries(row.data).map(([k, v], j) => (
-                                            <TableRow key={`${i}-${j}`}>
-                                                <TableCell className="whitespace-nowrap">{new Date(row.ts).toLocaleString()}</TableCell>
-                                                <TableCell>{k}</TableCell>
-                                                <TableCell>{String(v)}</TableCell>
-                                            </TableRow>
-                                        ))
-                                    ))
-                                )}
-                            </TableBody>
-                        </Table>
-                    </div>
-                </CardContent>
-            </Card>
         </div>
     )
 }
