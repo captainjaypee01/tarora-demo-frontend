@@ -1,4 +1,11 @@
-export type WSTelemetry = {
+export type BaseWS = {
+    device_id: string;
+    type: string;
+    ts: string;
+    name?: string;
+};
+
+export type WSTelemetry = BaseWS & {
     kind: "telemetry";
     device_id: string;
     type: string;
@@ -6,7 +13,7 @@ export type WSTelemetry = {
     data: Record<string, unknown>;
 };
 
-export type WSStatus = {
+export type WSStatus = BaseWS & {
     kind: "status";
     device_id: string;
     type: string;
@@ -14,7 +21,7 @@ export type WSStatus = {
     status: "online" | "offline" | "unknown";
 };
 
-export type WSEvent = {
+export type WSEvent = BaseWS & {
     kind: "event";
     device_id: string;
     type: string;

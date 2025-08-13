@@ -17,6 +17,9 @@ export function EventFeed({ events }: { events: WSEvent[] }) {
                                         {e.level ?? "info"}
                                     </span>
                                     <span className="font-medium">{e.event}</span>
+                                    <span className="ml-2 text-xs opacity-70">
+                                        {e.name ?? e.device_id}
+                                    </span>
                                 </div>
                                 {e.details && (
                                     <pre className="text-xs bg-zinc-950/50 text-zinc-200 rounded mt-1 p-2 overflow-x-auto">
