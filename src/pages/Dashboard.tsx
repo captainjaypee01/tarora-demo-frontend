@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchDevices, fetchTelemetry } from '@/lib/api'
 import type { Telemetry } from "@/lib/api"
@@ -15,6 +15,9 @@ import { Table, TableHeader, TableHead, TableBody, TableRow, TableCell } from '.
 import { KPI } from '../components/kpi'
 import { TelemetryChart } from '../components/telemetry-chart'
 import { CommandPanel } from '../components/command-panel'
+import { type WSMessage, type WSEvent, type WSStatus, type WSTelemetry } from "@/types/ws";
+import { StatusPill } from "@/components/status-pill";
+import { EventFeed } from "@/components/event-feed";
 
 export default function Dashboard() {
     const qc = useQueryClient()
@@ -25,12 +28,27 @@ export default function Dashboard() {
         queryFn: () => fetchTelemetry(selected!),
         enabled: !!selected,
     })
+    const [statusByDevice, setStatusByDevice] = useState<Record<string, WSStatus["status"]>>({});
+    const [events, setEvents] = useState<WSEvent[]>([]);
+    const telemetryBuffer = useRef<Record<string, WSTelemetry[]>>({}); // for charts
 
     useEffect(() => {
         const ws = telemetrySocket((msg) => {
-            if (msg.device_id === selected) {
-                const t: Telemetry = { device_id: msg.device_id, ts: msg.ts, data: msg.data }
-                qc.setQueryData<Telemetry[]>(['telemetry', selected], (old = []) => [...old.slice(-199), t])
+            if (msg.kind === "status") {
+                setStatusByDevice((m) => ({ ...m, [msg.device_id]: msg.status }));
+            } else if (msg.kind === "event") {
+                setEvents((arr) => {
+                    const next = arr.length > 200 ? arr.slice(arr.length - 200) : arr;
+                    return [...next, msg];
+                });
+                // optional: toast on alarms
+                // if (msg.level === "alarm") toast.error(`${msg.device_id}: ${msg.event}`);
+            } else if (msg.kind === "telemetry") {
+                const dev = msg.device_id;
+                const buf = telemetryBuffer.current[dev] ?? [];
+                buf.push(msg);
+                if (buf.length > 500) buf.shift();
+                telemetryBuffer.current[dev] = buf;
             }
         })
         return () => ws.close()
@@ -40,7 +58,8 @@ export default function Dashboard() {
 
     const latest = series[series.length - 1]
     const metricKeys = latest ? Object.keys(latest.data) : []
-
+    console.log('series', series);
+    console.log('series reverse', series.reverse());
     return (
         <div className="max-w-8xl mx-auto p-6 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
@@ -94,6 +113,9 @@ export default function Dashboard() {
                 </Card>
             )}
 
+            <div className="col-span-1">
+                <EventFeed events={events} />
+            </div>
             <Card>
                 <CardHeader>
                     <CardTitle className="text-base sm:text-lg">Recent Telemetry</CardTitle>
@@ -116,7 +138,7 @@ export default function Dashboard() {
                                         </TableCell>
                                     </TableRow>
                                 ) : (
-                                    series.slice(-50).reverse().flatMap((row, i) => (
+                                    series?.reverse().flatMap((row, i) => (
                                         Object.entries(row.data).map(([k, v], j) => (
                                             <TableRow key={`${i}-${j}`}>
                                                 <TableCell className="whitespace-nowrap">{new Date(row.ts).toLocaleString()}</TableCell>
