@@ -1,12 +1,16 @@
+// src/components/device-telemetry-table.tsx
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Telemetry } from "@/lib/api";
+import { toLocalStringStrict } from "@/lib/time";
 
 export function TelemetryTable({ rows }: { rows: Telemetry[] }) {
-    const list = (rows ?? []).slice().reverse(); // newest at bottom without mutating cache
+    const list = [...(rows ?? [])].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
     return (
         <Card>
-            <CardHeader><CardTitle className="text-base sm:text-lg">Recent Telemetry</CardTitle></CardHeader>
+            <CardHeader>
+                <CardTitle className="text-base sm:text-lg">Recent Telemetry</CardTitle>
+            </CardHeader>
             <CardContent>
                 <div className="overflow-x-auto">
                     <Table>
@@ -26,8 +30,8 @@ export function TelemetryTable({ rows }: { rows: Telemetry[] }) {
                                 </TableRow>
                             ) : list.flatMap((row, i) =>
                                 Object.entries(row.data).map(([k, v], j) => (
-                                    <TableRow key={`${i}-${j}`}>
-                                        <TableCell className="whitespace-nowrap">{new Date(row.ts).toLocaleString()}</TableCell>
+                                    <TableRow key={`${row.ts}-${i}-${j}`}>
+                                        <TableCell className="whitespace-nowrap">{toLocalStringStrict(row.ts)}</TableCell>
                                         <TableCell>{k}</TableCell>
                                         <TableCell>{String(v)}</TableCell>
                                     </TableRow>

@@ -35,16 +35,21 @@ export default function Dashboard() {
         enabled: !!selected,
     })
 
+    const prependCapped = <T,>(prev: T[] | undefined, item: T, cap: number) => {
+        const base = prev ?? [];
+        if (base.length && "ts" in base[0] && "ts" in (item as any)) {
+            // avoid duplicates when the same row comes from HTTP + WS
+            const exists = base.some((r: any) => r.ts === (item as any).ts);
+            if (exists) return base;
+        }
+        const next = [item, ...base];
+        return next.length > cap ? next.slice(0, cap) : next;
+    };
+
     const [statusByDevice, setStatusByDevice] = useState<Record<string, WSStatus["status"]>>({});
     const [events, setEvents] = useState<WSEvent[]>([]);
     const telemetryBuffer = useRef<Record<string, WSTelemetry[]>>({}); // for charts
 
-    // Door summary (last 200 telemetry points for the selected device)
-    const doorSummary = useMemo(() => {
-        // IMPORTANT: don't mutate `series` (avoid series.reverse()).
-        const last = series.slice(-200);
-        return summarizeDoor(last);
-    }, [series]);
 
     // A device is a “door” if any telemetry point has a boolean `open` key
     const isDoorDevice = useMemo(
@@ -56,47 +61,42 @@ export default function Dashboard() {
             if (msg.kind === "status") {
                 setStatusByDevice((m) => ({ ...m, [msg.device_id]: msg.status }));
             } else if (msg.kind === "event") {
+                // global feed (append)
                 setEvents((arr) => {
-                    const next = arr.length > 200 ? arr.slice(arr.length - 200) : arr;
-                    return [...next, msg];
+                    const next = [...arr, msg];
+                    return next.length > 200 ? next.slice(next.length - 200) : next;
                 });
-                // live-update device events cache
+                // device table (prepend)
                 qc.setQueryData<EventItem[] | undefined>(['events', msg.device_id], (prev) => {
                     const row: EventItem = {
-                        id: Date.now(), // UI key only; DB id comes from HTTP fetch
-                        device_id: msg.device_id,
-                        ts: msg.ts,
-                        level: msg.level ?? "info",
-                        event: msg.event,
-                        details: msg.details,
-                        name: msg.name,
+                        id: Date.now(), device_id: msg.device_id, ts: msg.ts,
+                        level: msg.level ?? "info", event: msg.event, details: msg.details, name: msg.name,
                     };
-                    const arr = prev ? [...prev, row] : [row];
-                    return arr.length > 200 ? arr.slice(arr.length - 200) : arr;
+                    return prependCapped(prev, row, 200);
                 });
-                // optional: toast on alarms
-                // if (msg.level === "alarm") toast.error(`${msg.device_id}: ${msg.event}`);
             } else if (msg.kind === "telemetry") {
                 const dev = msg.device_id;
-                const buf = telemetryBuffer.current[dev] ?? [];
-                buf.push(msg);
-                if (buf.length > 500) buf.shift();
-                telemetryBuffer.current[dev] = buf;
-                // live-update telemetry cache for that device
+                // device telemetry table (prepend)
                 qc.setQueryData<Telemetry[] | undefined>(['telemetry', dev], (prev) => {
                     const row: Telemetry = { device_id: dev, ts: msg.ts, data: (msg.data as Record<string, any>) ?? {} };
-                    const arr = prev ? [...prev, row] : [row];
-                    return arr.length > 500 ? arr.slice(arr.length - 500) : arr;
+                    return prependCapped(prev, row, 500);
                 });
             }
-        })
-        return () => ws.close()
-    }, [qc])
+        });
+        return () => ws.close();
+    }, [qc]);
 
     useEffect(() => { if (devices.length && !selected) setSelected(devices[0].id) }, [devices, selected])
-
+    const seriesAsc = useMemo(
+        () => [...series].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()),
+        [series]
+    );
     const latest = series?.[series.length - 1]
     const metricKeys = latest ? Object.keys(latest.data) : []
+
+    // Door summary (last 200 telemetry points for the selected device)
+    const doorSummary = useMemo(() => summarizeDoor(seriesAsc.slice(-200)), [seriesAsc]);
+
     return (
         <div className="max-w-8xl mx-auto p-6 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
@@ -136,7 +136,7 @@ export default function Dashboard() {
                     {isLoadingSeries ? (
                         <div className="text-muted-foreground text-sm">Loading telemetry…</div>
                     ) : selected && metricKeys.length > 0 ? (
-                        <TelemetryChart data={series} keys={metricKeys} />
+                        <TelemetryChart data={seriesAsc} keys={metricKeys} />
                     ) : (
                         <div className="text-muted-foreground text-sm">Select a device to see charts.</div>
                     )}
